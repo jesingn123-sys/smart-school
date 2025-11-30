@@ -1,0 +1,7 @@
+{
+  "name": "Smart School QR Attendance",
+  "description": "A web application for managing student attendance using QR code registration and scanning.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
