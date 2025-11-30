@@ -122,17 +122,20 @@ const AttendanceScanner: React.FC = () => {
   }, [getFormattedDate, getFormattedTime, fetchTodayAttendance, message]);
 
   const onScanError = useCallback((errorMessage: string) => {
-    if (errorMessage.includes("No video device") || errorMessage.includes("Permission denied")) {
+    // These are critical errors related to camera access or availability
+    if (errorMessage.includes("No video device") || errorMessage.includes("Permission denied") || errorMessage.includes("NotAllowedError")) {
         setError(`Camera error: ${errorMessage}. Please ensure camera is connected and permissions are granted.`);
+        // Attempt to stop and clear the scanner gracefully if a critical error occurs
         if (html5QrcodeScannerRef.current) {
-            html5QrcodeScannerRef.current.clear().catch(() => {}); // Attempt to stop scanner gracefully
+            html5QrcodeScannerRef.current.clear().catch((err) => console.error("Error clearing scanner on critical error:", err));
+            html5QrcodeScannerRef.current = null; // Ensure re-initialization on next start
         }
-        setIsScannerActive(false);
+        setIsScannerActive(false); // Update UI state
     } else {
         // Suppress constant "no QR code found" type errors, only show critical ones
-        if (!errorMessage.includes("No QR code found")) {
+        if (!errorMessage.includes("No QR code found") && !errorMessage.includes("reader already running")) {
             console.warn(`QR Scan Error: ${errorMessage}`);
-            // setError(`Scan error: ${errorMessage}`);
+            // setError(`Scan error: ${errorMessage}`); // Consider enabling this for more verbose debugging if needed
         }
     }
   }, []);
@@ -140,36 +143,67 @@ const AttendanceScanner: React.FC = () => {
   const startScanner = useCallback(() => {
     setError(null);
     setMessage(null);
-    setIsScannerActive(true);
+    setIsScannerActive(true); // Set active state BEFORE rendering to ensure div exists
 
-    if (window.Html5QrcodeScanner && !html5QrcodeScannerRef.current) {
-      html5QrcodeScannerRef.current = new window.Html5QrcodeScanner(
-        "qr-code-reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false // verbose
-      );
-      html5QrcodeScannerRef.current.render(onScanSuccess, onScanError);
-    } else if (html5QrcodeScannerRef.current) {
-        // If scanner exists but was cleared, render it again
-        html5QrcodeScannerRef.current.render(onScanSuccess, onScanError);
-    }
+    // Small delay to ensure DOM element is rendered if state change causes re-render
+    setTimeout(() => {
+        if (!document.getElementById("qr-code-reader")) {
+            console.error("qr-code-reader element not found. Cannot start scanner.");
+            setError("Cannot start scanner: Required camera element not found. Please try again.");
+            setIsScannerActive(false);
+            return;
+        }
+
+        if (window.Html5QrcodeScanner) {
+            if (!html5QrcodeScannerRef.current) {
+                console.log("Creating new Html5QrcodeScanner instance.");
+                html5QrcodeScannerRef.current = new window.Html5QrcodeScanner(
+                    "qr-code-reader",
+                    { fps: 10, qrbox: { width: 250, height: 250 }, disableFlip: false }, // Added disableFlip: false for better compatibility
+                    false // verbose
+                );
+            } else {
+                console.log("Re-using existing Html5QrcodeScanner instance.");
+            }
+            
+            // Render the scanner
+            html5QrcodeScannerRef.current.render(onScanSuccess, onScanError)
+                .then(() => setMessage('Scanner started. Please grant camera permission if prompted.'))
+                .catch(err => {
+                    console.error("Error rendering html5QrcodeScanner:", err);
+                    setError(`Failed to start scanner: ${err.message || String(err)}. Ensure camera access is allowed.`);
+                    setIsScannerActive(false);
+                    if (html5QrcodeScannerRef.current) {
+                        html5QrcodeScannerRef.current.clear().catch(() => {});
+                        html5QrcodeScannerRef.current = null;
+                    }
+                });
+        } else {
+            setError("Html5QrcodeScanner library not loaded.");
+            setIsScannerActive(false);
+        }
+    }, 100); // Give React some time to render the div
   }, [onScanSuccess, onScanError]);
 
   const stopScanner = useCallback(() => {
     if (html5QrcodeScannerRef.current) {
-      html5QrcodeScannerRef.current.clear()
+      // Use a variable to hold the current ref to avoid null issues during async clear
+      const currentScanner = html5QrcodeScannerRef.current;
+      html5QrcodeScannerRef.current = null; // Immediately nullify to prevent re-use while clearing
+
+      currentScanner.clear()
         .then(() => {
           setIsScannerActive(false);
           setMessage('Scanner stopped.');
-          setError(null); // Clear any previous errors when stopping
-          html5QrcodeScannerRef.current = null; // Reset scanner instance
+          setError(null);
         })
         .catch(err => {
           console.error("Failed to clear html5QrcodeScanner", err);
-          setError("Failed to stop scanner gracefully.");
+          setError("Failed to stop scanner gracefully. You may need to refresh.");
         });
     } else {
       setIsScannerActive(false);
+      setMessage('Scanner was already stopped or not initialized.');
     }
   }, []);
 

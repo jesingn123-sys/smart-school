@@ -5,7 +5,8 @@ import AttendanceReports from './components/AttendanceReports';
 import Layout from './components/Layout';
 import { AppTab } from './types';
 
-function App(): JSX.Element { // Fix: Changed return type from React.FC to JSX.Element
+// Fix: Changed return type from JSX.Element to React.ReactElement to resolve "Cannot find namespace 'JSX'"
+function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.REGISTER_STUDENT);
 
   return (
