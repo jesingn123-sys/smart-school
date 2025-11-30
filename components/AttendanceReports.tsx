@@ -5,13 +5,15 @@ import { Student, AttendanceRecord, ReportData } from '../types';
 import { FALLBACK_OCR_VALUE } from '../constants'; // Fix: Moved import from types.ts to constants.ts
 
 const AttendanceReports: React.FC = () => {
-  const [reportData, setReportData] = useState<ReportData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
   const getFormattedDate = useCallback((dateObj: Date) => {
     return dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
   }, []);
+
+  const [startDate, setStartDate] = useState<string>(getFormattedDate(new Date()));
+  const [endDate, setEndDate] = useState<string>(getFormattedDate(new Date()));
+  const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   const calculateReports = useCallback(() => {
     setLoading(true);
@@ -19,24 +21,28 @@ const AttendanceReports: React.FC = () => {
     try {
       const students = getStudents();
       const allAttendance = getAttendanceRecords();
-      const today = getFormattedDate(new Date());
+
+      // Filter attendance records by selected date range
+      const attendanceInPeriod = allAttendance.filter(record =>
+        record.date >= startDate && record.date <= endDate
+      );
 
       const totalStudents = students.length;
 
-      const attendanceToday = allAttendance.filter(record => record.date === today);
-      const presentStudentIdsToday = new Set(
-        attendanceToday
+      // Calculate unique students present in the period
+      const presentStudentIdsInPeriod = new Set(
+        attendanceInPeriod
           .filter(record => record.status === 'present')
           .map(record => record.student_id)
       );
 
-      const totalPresentToday = presentStudentIdsToday.size;
-      const totalAbsentToday = totalStudents - totalPresentToday;
+      const totalPresentInPeriod = presentStudentIdsInPeriod.size;
+      const totalAbsentInPeriod = totalStudents - totalPresentInPeriod; // Students not present at all in the period
 
-      let girlsPresentToday = 0;
-      let girlsAbsentToday = 0;
-      let boysPresentToday = 0;
-      let boysAbsentToday = 0;
+      let girlsPresentInPeriod = 0;
+      let girlsAbsentInPeriod = 0;
+      let boysPresentInPeriod = 0;
+      let boysAbsentInPeriod = 0;
 
       const studentGenderMap = new Map<string, string>();
       students.forEach(s => {
@@ -45,62 +51,51 @@ const AttendanceReports: React.FC = () => {
 
       students.forEach(student => {
         const gender = studentGenderMap.get(student.id);
-        const isPresent = presentStudentIdsToday.has(student.id);
+        const isPresentAtLeastOnce = presentStudentIdsInPeriod.has(student.id);
 
-        if (gender === 'female' || gender === 'girl' || gender === 'g') { // Simple gender inference
-          if (isPresent) {
-            girlsPresentToday++;
+        if (gender === 'female' || gender === 'girl' || gender === 'g') {
+          if (isPresentAtLeastOnce) {
+            girlsPresentInPeriod++;
           } else {
-            girlsAbsentToday++;
+            girlsAbsentInPeriod++;
           }
-        } else if (gender === 'male' || gender === 'boy' || gender === 'b') { // Simple gender inference
-          if (isPresent) {
-            boysPresentToday++;
+        } else if (gender === 'male' || gender === 'boy' || gender === 'b') {
+          if (isPresentAtLeastOnce) {
+            boysPresentInPeriod++;
           } else {
-            boysAbsentToday++;
+            boysAbsentInPeriod++;
           }
         }
-        // Students with 'Unknown' or other genders are not explicitly counted in boy/girl stats
       });
 
       // Individual student attendance history
       const individualAttendance: ReportData['individualAttendance'] = {};
-      const studentAttendanceMap = new Map<string, AttendanceRecord[]>();
-      allAttendance.forEach(record => {
-        if (!studentAttendanceMap.has(record.student_id)) {
-          studentAttendanceMap.set(record.student_id, []);
-        }
-        studentAttendanceMap.get(record.student_id)?.push(record);
-      });
-
+      
       students.forEach(student => {
-        const studentRecords = studentAttendanceMap.get(student.id) || [];
-        const presentDays = new Set(studentRecords.filter(r => r.status === 'present').map(r => r.date)).size;
-        const allAttendanceDates = new Set(studentRecords.map(r => r.date));
-        // Also consider dates when they were marked absent or just not present (total days since first record)
-        // For simplicity, total days is unique dates with attendance or up to today.
-        // A more robust system would track all school days.
-        const totalDays = allAttendanceDates.size;
-        const percentage = totalDays > 0 ? (presentDays / totalDays) * 100 : 0;
+        const studentRecordsInPeriod = attendanceInPeriod.filter(r => r.student_id === student.id);
+        const presentDays = new Set(studentRecordsInPeriod.filter(r => r.status === 'present').map(r => r.date)).size;
+        const totalAttendanceDaysRecorded = new Set(studentRecordsInPeriod.map(r => r.date)).size;
+
+        const percentage = totalAttendanceDaysRecorded > 0 ? (presentDays / totalAttendanceDaysRecorded) * 100 : 0;
 
         individualAttendance[student.id] = {
           name: student.name,
           gender: student.gender,
           presentDays,
-          totalDays,
+          totalDays: totalAttendanceDaysRecorded,
           percentage: parseFloat(percentage.toFixed(2)),
-          history: studentRecords.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+          history: studentRecordsInPeriod.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
         };
       });
 
       setReportData({
         totalStudents,
-        totalPresentToday,
-        totalAbsentToday,
-        girlsPresentToday,
-        girlsAbsentToday,
-        boysPresentToday,
-        boysAbsentToday,
+        totalPresentInPeriod,
+        totalAbsentInPeriod,
+        girlsPresentInPeriod,
+        girlsAbsentInPeriod,
+        boysPresentInPeriod,
+        boysAbsentInPeriod,
         individualAttendance,
       });
     } catch (err) {
@@ -110,14 +105,11 @@ const AttendanceReports: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [getFormattedDate]);
+  }, [startDate, endDate, getFormattedDate]); // Recalculate when dates change
 
   useEffect(() => {
     calculateReports();
-    // Re-calculate daily, or when student/attendance data changes
-    const interval = setInterval(calculateReports, 60000); // Refresh every minute
-    return () => clearInterval(interval);
-  }, [calculateReports]);
+  }, [calculateReports]); // Recalculate when `calculateReports` changes (i.e., when startDate/endDate change)
 
   if (loading) {
     return <div className="text-blue-600 text-lg font-semibold text-center py-8">Loading reports...</div>;
@@ -137,27 +129,54 @@ const AttendanceReports: React.FC = () => {
 
   return (
     <div className="space-y-8">
+      {/* Date Filter Section */}
+      <div className="bg-gray-50 p-4 rounded-lg shadow-sm">
+        <h3 className="text-xl font-semibold mb-3 text-gray-800">Filter Attendance by Date</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="startDate" className="block text-sm font-medium text-gray-700">From Date:</label>
+            <input
+              type="date"
+              id="startDate"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+            />
+          </div>
+          <div>
+            <label htmlFor="endDate" className="block text-sm font-medium text-gray-700">To Date:</label>
+            <input
+              type="date"
+              id="endDate"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2"
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Overview Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <ReportCard title="Total Students" value={reportData.totalStudents} />
-        <ReportCard title="Present Today" value={reportData.totalPresentToday} type="present" />
-        <ReportCard title="Absent Today" value={reportData.totalAbsentToday} type="absent" />
+        <ReportCard title="Total Present" value={reportData.totalPresentInPeriod} type="present" />
+        <ReportCard title="Total Absent" value={reportData.totalAbsentInPeriod} type="absent" />
       </div>
 
       {/* Gender-based Attendance */}
-      {(reportData.girlsPresentToday > 0 || reportData.girlsAbsentToday > 0 || reportData.boysPresentToday > 0 || reportData.boysAbsentToday > 0) && (
+      {(reportData.girlsPresentInPeriod > 0 || reportData.girlsAbsentInPeriod > 0 || reportData.boysPresentInPeriod > 0 || reportData.boysAbsentInPeriod > 0) && (
         <div className="bg-white p-6 rounded-lg shadow-md">
-          <h3 className="text-2xl font-semibold mb-4 text-gray-800">Gender-wise Today's Attendance</h3>
+          <h3 className="text-2xl font-semibold mb-4 text-gray-800">Gender-wise Attendance (Filtered Period)</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-pink-50 p-4 rounded-lg shadow-sm">
               <h4 className="font-bold text-pink-700 mb-2">Girls</h4>
-              <p className="text-lg text-gray-700">Present: <span className="font-semibold text-green-600">{reportData.girlsPresentToday}</span></p>
-              <p className="text-lg text-gray-700">Absent: <span className="font-semibold text-red-600">{reportData.girlsAbsentToday}</span></p>
+              <p className="text-lg text-gray-700">Present: <span className="font-semibold text-green-600">{reportData.girlsPresentInPeriod}</span></p>
+              <p className="text-lg text-gray-700">Absent: <span className="font-semibold text-red-600">{reportData.girlsAbsentInPeriod}</span></p>
             </div>
             <div className="bg-blue-50 p-4 rounded-lg shadow-sm">
               <h4 className="font-bold text-blue-700 mb-2">Boys</h4>
-              <p className="text-lg text-gray-700">Present: <span className="font-semibold text-green-600">{reportData.boysPresentToday}</span></p>
-              <p className="text-lg text-gray-700">Absent: <span className="font-semibold text-red-600">{reportData.boysAbsentToday}</span></p>
+              <p className="text-lg text-gray-700">Present: <span className="font-semibold text-green-600">{reportData.boysPresentInPeriod}</span></p>
+              <p className="text-lg text-gray-700">Absent: <span className="font-semibold text-red-600">{reportData.boysAbsentInPeriod}</span></p>
             </div>
           </div>
         </div>
@@ -165,9 +184,9 @@ const AttendanceReports: React.FC = () => {
 
       {/* Individual Student Attendance History */}
       <div className="bg-white p-6 rounded-lg shadow-md">
-        <h3 className="text-2xl font-semibold mb-4 text-gray-800">Individual Student Attendance History</h3>
+        <h3 className="text-2xl font-semibold mb-4 text-gray-800">Individual Student Attendance History (Filtered Period)</h3>
         {Object.keys(reportData.individualAttendance).length === 0 ? (
-          <p className="text-gray-600">No individual attendance history available.</p>
+          <p className="text-gray-600">No individual attendance history available for this period.</p>
         ) : (
           <div className="space-y-4 max-h-96 overflow-y-auto">
             {Object.values(reportData.individualAttendance)

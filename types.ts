@@ -38,12 +38,12 @@ export interface OCRResult {
 
 export interface ReportData {
   totalStudents: number;
-  totalPresentToday: number;
-  totalAbsentToday: number;
-  girlsPresentToday: number;
-  girlsAbsentToday: number;
-  boysPresentToday: number;
-  boysAbsentToday: number;
+  totalPresentInPeriod: number; // Renamed from totalPresentToday
+  totalAbsentInPeriod: number;  // Renamed from totalAbsentToday
+  girlsPresentInPeriod: number; // Renamed from girlsPresentToday
+  girlsAbsentInPeriod: number;  // Renamed from girlsAbsentToday
+  boysPresentInPeriod: number;  // Renamed from boysPresentToday
+  boysAbsentInPeriod: number;   // Renamed from boysAbsentToday
   individualAttendance: {
     [studentId: string]: {
       name: string;

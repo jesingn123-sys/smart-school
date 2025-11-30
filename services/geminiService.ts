@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { OCRResult, Student } from '../types';
+import { OCRResult } from '../types';
 import { OCR_PROMPT } from '../constants';
 
 /**
@@ -35,24 +35,27 @@ export const performOcr = async (imageDataUrl: string, mimeType: string): Promis
     throw new Error("Gemini API Key is not configured. Please set process.env.API_KEY.");
   }
 
+  // Create a new GoogleGenAI instance right before making an API call to ensure it always uses the most up-to-date API key.
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-3-pro-image-preview', // Upgraded model for potentially better OCR accuracy
       contents: {
         parts: [
           { text: OCR_PROMPT },
           {
             inlineData: {
               mimeType: mimeType,
-              data: imageDataUrl.split(',')[1], // Remove "data:image/jpeg;base64," prefix
+              data: imageDataUrl, // imageDataUrl is already the raw base64 string from blobToBase64
             },
           },
         ],
       },
       config: {
         responseMimeType: 'application/json',
+        temperature: 0.2, // Lower temperature for more deterministic output
+        topP: 0.9,       // Control diversity
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -83,15 +86,8 @@ export const performOcr = async (imageDataUrl: string, mimeType: string): Promis
     };
   } catch (error) {
     console.error('OCR failed:', error);
-    // Return nulls if OCR completely fails or parsing fails
-    return {
-      name: null,
-      father_name: null,
-      school_name: null,
-      class: null,
-      section: null,
-      roll_number: null,
-      gender: null,
-    };
+    // Re-throw the error to be handled by the calling component,
+    // which can then check for specific API key related messages.
+    throw error; 
   }
 };
