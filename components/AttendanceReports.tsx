@@ -1,8 +1,14 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getStudents } from '../services/studentService';
 import { getAttendanceRecords } from '../services/attendanceService';
 import { Student, AttendanceRecord, ReportData } from '../types';
 import { FALLBACK_OCR_VALUE } from '../constants'; // Fix: Moved import from types.ts to constants.ts
+
+declare global {
+  interface Window {
+    Chart: any; // Declare Chart.js global object
+  }
+}
 
 const AttendanceReports: React.FC = () => {
   const getFormattedDate = useCallback((dateObj: Date) => {
@@ -14,6 +20,10 @@ const AttendanceReports: React.FC = () => {
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const overviewChartRef = useRef<HTMLCanvasElement>(null);
+  const genderChartRef = useRef<HTMLCanvasElement>(null);
+  const chartInstancesRef = useRef<any[]>([]); // To store Chart.js instances
 
   const calculateReports = useCallback(() => {
     setLoading(true);
@@ -49,24 +59,33 @@ const AttendanceReports: React.FC = () => {
         studentGenderMap.set(s.id, (s.gender || '').toLowerCase());
       });
 
+      // To accurately count absent, we need to consider students who *could* have been present
+      // i.e., total students minus those actually present in the period.
+      const presentStudentIdsSet = new Set<string>();
+      attendanceInPeriod
+        .filter(record => record.status === 'present')
+        .forEach(record => presentStudentIdsSet.add(record.student_id));
+
       students.forEach(student => {
         const gender = studentGenderMap.get(student.id);
-        const isPresentAtLeastOnce = presentStudentIdsInPeriod.has(student.id);
+        const isPresent = presentStudentIdsSet.has(student.id);
 
-        if (gender === 'female' || gender === 'girl' || gender === 'g') {
-          if (isPresentAtLeastOnce) {
+        if (gender === 'female' || gender === 'girl') {
+          if (isPresent) {
             girlsPresentInPeriod++;
           } else {
             girlsAbsentInPeriod++;
           }
-        } else if (gender === 'male' || gender === 'boy' || gender === 'b') {
-          if (isPresentAtLeastOnce) {
+        } else if (gender === 'male' || gender === 'boy') {
+          if (isPresent) {
             boysPresentInPeriod++;
           } else {
             boysAbsentInPeriod++;
           }
         }
+        // Students with 'Other' or 'Unknown' gender are not counted in specific gender breakdowns
       });
+
 
       // Individual student attendance history
       const individualAttendance: ReportData['individualAttendance'] = {};
@@ -110,6 +129,109 @@ const AttendanceReports: React.FC = () => {
   useEffect(() => {
     calculateReports();
   }, [calculateReports]); // Recalculate when `calculateReports` changes (i.e., when startDate/endDate change)
+
+  useEffect(() => {
+    if (!reportData || typeof window.Chart === 'undefined') return;
+
+    // Destroy previous chart instances
+    chartInstancesRef.current.forEach(chart => chart.destroy());
+    chartInstancesRef.current = [];
+
+    // --- Overview Chart (Doughnut) ---
+    if (overviewChartRef.current) {
+      const ctx = overviewChartRef.current.getContext('2d');
+      if (ctx) {
+        const overviewChart = new window.Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Total Present', 'Total Absent'],
+            datasets: [{
+              data: [reportData.totalPresentInPeriod, reportData.totalAbsentInPeriod],
+              backgroundColor: ['#4CAF50', '#F44336'], // Green for present, Red for absent
+              hoverOffset: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                position: 'top',
+              },
+              title: {
+                display: true,
+                text: 'Overall Attendance Summary',
+                font: {
+                  size: 16
+                }
+              }
+            }
+          }
+        });
+        chartInstancesRef.current.push(overviewChart);
+      }
+    }
+
+    // --- Gender-wise Bar Chart ---
+    if (genderChartRef.current) {
+      const ctx = genderChartRef.current.getContext('2d');
+      if (ctx) {
+        const genderChart = new window.Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['Girls', 'Boys'],
+            datasets: [
+              {
+                label: 'Present',
+                data: [reportData.girlsPresentInPeriod, reportData.boysPresentInPeriod],
+                backgroundColor: '#4CAF50', // Green
+              },
+              {
+                label: 'Absent',
+                data: [reportData.girlsAbsentInPeriod, reportData.boysAbsentInPeriod],
+                backgroundColor: '#F44336', // Red
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                position: 'top',
+              },
+              title: {
+                display: true,
+                text: 'Gender-wise Attendance Breakdown',
+                font: {
+                  size: 16
+                }
+              }
+            },
+            scales: {
+              x: {
+                stacked: false, 
+              },
+              y: {
+                stacked: false,
+                beginAtZero: true,
+                title: {
+                  display: true,
+                  text: 'Number of Students'
+                }
+              }
+            }
+          }
+        });
+        chartInstancesRef.current.push(genderChart);
+      }
+    }
+
+    // Cleanup function to destroy charts when component unmounts or data changes
+    return () => {
+      chartInstancesRef.current.forEach(chart => chart.destroy());
+      chartInstancesRef.current = [];
+    };
+
+  }, [reportData]); // Re-run effect when reportData changes
 
   if (loading) {
     return <div className="text-blue-600 text-lg font-semibold text-center py-8">Loading reports...</div>;
@@ -161,6 +283,16 @@ const AttendanceReports: React.FC = () => {
         <ReportCard title="Total Students" value={reportData.totalStudents} />
         <ReportCard title="Total Present" value={reportData.totalPresentInPeriod} type="present" />
         <ReportCard title="Total Absent" value={reportData.totalAbsentInPeriod} type="absent" />
+      </div>
+
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <canvas ref={overviewChartRef}></canvas>
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <canvas ref={genderChartRef}></canvas>
+        </div>
       </div>
 
       {/* Gender-based Attendance */}
